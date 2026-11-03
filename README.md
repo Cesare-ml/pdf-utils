@@ -68,3 +68,34 @@ Per PDF/A si può testare il comando Ghostscript e il profilo ICC locale, verifi
 ## Test
 
 L'engine JPG è stato testato mediante harness nativo su Linux, con PDF risultante leggibile da Poppler e Ghostscript. Il setup Ghostscript PDF/A-2b è stato testato con Ghostscript 10.05.1 su Linux, producendo XMP PDF/A-2b. I due eseguibili Windows sono compilati come PE con subsystem 6.01 e librerie di sistema disponibili su Windows 7. **Non è stato possibile eseguirli su un'installazione reale Windows 7/11 in questa sessione:** serve un test finale sui due sistemi operativi prima di una distribuzione in produzione.
+
+## Requisito Win7: consegnare **un solo EXE**, senza installazione (nuovo lavoro)
+
+**Attenzione:** le release `PDF-Utils-x86.exe` e `PDF-Utils-x64.exe` pubblicate in precedenza **non sono ancora un prodotto unico autosufficiente per entrambe le conversioni**. La modalità PDF/A di quei file richiede Ghostscript installato e compatibile. Non distribuirli come soluzione autonoma completa.
+
+È stata introdotta una modalità di compilazione `PDFUTILS_PORTABLE=1`: produce un launcher Win32 **x86** (avviabile sia su Windows 7 32/64 bit, sia su Windows 11 x64) che legge un pacchetto Ghostscript **incorporato nello stesso EXE** e lo estrae in una cartella temporanea isolata, creata per ogni elaborazione con identificatore casuale. Alla fine tenta di cancellarla. L'utente non deve installare alcun software né disporre di privilegi amministrativi, ma deve avere diritto di scrittura nella cartella temporanea e nella cartella selezionata.
+
+### Creazione della release single-file
+
+1. Preparare una distribuzione ufficiale **Ghostscript Win32 a 32 bit** compatibile *realmente* con Windows 7 SP1, con `bin/gswin32c.exe`, `bin/gsdll32.dll`, `lib/`, `Resource/`, file di licenza e tutte le DLL richieste (inclusi eventuali runtime VC++ non preinstallati). **Non basta** un installer Ghostscript: bisogna estrarre i suoi file in una directory di preparazione sul PC di sviluppo; l'utente finale non installa nulla.
+2. Collocare i file estratti in `vendor/ghostscript-win32/` mantenendo le sottocartelle.
+3. Compilare il launcher:
+
+   ```bash
+   PDFUTILS_PORTABLE=1 bash scripts/build-cross.sh
+   ```
+4. Generare un unico EXE auto-contenuto:
+
+   ```bash
+   python3 scripts/package-portable.py --ghostscript vendor/ghostscript-win32
+   ```
+
+   Output: `dist/PDF-Utils-Portable-Win7-Win11.exe`.
+
+5. Testare **su Windows 7 SP1 32-bit pulito**, senza Ghostscript o .NET aggiuntivi, e su Windows 11, con PDF di prova multipagina, documenti contenenti font incorporati/non incorporati, colori diversi, nomi file accentati e cartelle con spazi. Verificare il PDF/A con veraPDF. Verificare se il motore Ghostscript scaricato richiede API Windows introdotte dopo Windows 7 e fare scansione degli import PE di tutte le DLL. **Queste prove non sono ancora completate; non pubblicare l'EXE finale finché non hanno successo.**
+
+### Licenza e sicurezza
+
+Ghostscript è disponibile con licenza **AGPL-3.0** oppure licenza commerciale Artifex. Un eseguibile che incorpora e ridistribuisce Ghostscript deve soddisfare le condizioni della licenza scelta. La distribuzione AGPL richiede rispettivi avvisi, diritti e accesso al codice sorgente corrispondente delle componenti integrate; per la distribuzione proprietaria valutare licenza commerciale Artifex. Il codice originale PDF Utils, di per sé, è MIT: il pacchetto aggregato con Ghostscript è soggetto anche alle condizioni di Ghostscript. Non caricare nel repository pubblico un pacchetto privo dei necessari adempimenti.
+
+Windows 7 non riceve aggiornamenti ordinari di sicurezza: usare preferibilmente PDF da fonti fidate e disporre di backup. La conversione PDF/A è una trasformazione: verificare che nessun dato utile sia stato perso e convalidare il risultato mediante veraPDF. I file di input non vengono sovrascritti.
