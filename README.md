@@ -77,6 +77,27 @@ L'engine JPG è stato testato mediante harness nativo su Linux, con PDF risultan
 
 ### Creazione della release single-file
 
+### Preparazione automatica del motore ufficiale (solo sul computer di sviluppo)
+
+Per il **destinatario Windows 7 non sono richiesti né 7-Zip né Ghostscript né Python**. Questi strumenti servono solo a chi costruisce il file EXE da consegnare.
+
+Sul computer di sviluppo, con connessione Internet e 7-Zip a riga di comando:
+
+```bash
+python3 scripts/vendor-ghostscript.py
+PDFUTILS_PORTABLE=1 bash scripts/build-cross.sh
+python3 scripts/check-win7-pe.py --launcher dist/PDF-Utils-Win7-portable-base.exe --ghostscript vendor/ghostscript-win32
+python3 -m unittest discover -s tests -v
+python3 scripts/package-portable.py --ghostscript vendor/ghostscript-win32
+```
+
+`vendor-ghostscript.py` scarica esclusivamente l'installer **ufficiale Ghostscript Win32 10.08.0** (`gs10080w32.exe`), ne verifica **SHA-256** contro il valore pubblicato dall'editore (`42f9e97ea2580bc24e2604cc03a2213bdba6094869dbe9f8ede50f8dd86b7463`), poi lo **estrae senza installarlo**. È possibile usare un installer già scaricato con `--installer /percorso/gs10080w32.exe`.
+
+L'operazione di confezionamento rifiuta componenti non provenienti da questa preparazione verificata, DLL che sembrano tronche e import di librerie incompatibili con un Windows 7 pulito. La verifica statica degli import non sostituisce il **collaudo obbligatorio su una macchina Windows 7 SP1 32-bit reale**. La versione Ghostscript 10.08.0 non è ancora stata dichiarata compatibile con Windows 7 dal nostro collaudo.
+
+La directory `vendor/` e l'EXE finale non vengono committati automaticamente. Prima di distribuirli è necessario adempiere agli obblighi di licenza **AGPL-3.0** (o avere licenza commerciale Artifex), rendere disponibili i sorgenti corrispondenti e ottenere una conversione PDF/A-2b validata con veraPDF. Il destinatario riceverà **un solo EXE**, ma questa release non è ancora verificata e **non va distribuita come prodotto finale**.
+
+
 1. Preparare una distribuzione ufficiale **Ghostscript Win32 a 32 bit** compatibile *realmente* con Windows 7 SP1, con `bin/gswin32c.exe`, `bin/gsdll32.dll`, `lib/`, `Resource/`, file di licenza e tutte le DLL richieste (inclusi eventuali runtime VC++ non preinstallati). **Non basta** un installer Ghostscript: bisogna estrarre i suoi file in una directory di preparazione sul PC di sviluppo; l'utente finale non installa nulla.
 2. Collocare i file estratti in `vendor/ghostscript-win32/` mantenendo le sottocartelle.
 3. Compilare il launcher:
