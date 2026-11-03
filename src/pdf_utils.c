@@ -88,6 +88,7 @@ typedef LRESULT (__stdcall *WNDPROC)(HWND,UINT,WPARAM,LPARAM);
 #define OFN_EXPLORER 0x80000u
 #define FILE_BEGIN 0u
 #define FILE_CURRENT 1u
+#define FILE_END 2u
 #define IDC_FOLDER 1001
 #define IDC_BROWSE 1002
 #define IDC_JPG 1003
@@ -138,6 +139,12 @@ DLL DWORD WINAPI GetModuleFileNameW(HINSTANCE,LPWSTR,DWORD);
 DLL UINT WINAPI GetSystemDirectoryW(LPWSTR,UINT);
 DLL BOOL WINAPI GetColorDirectoryW(LPCWSTR,LPWSTR,DWORD*);
 DLL DWORD WINAPI GetEnvironmentVariableW(LPCWSTR,LPWSTR,DWORD);
+#if defined(PDFUTILS_PORTABLE)
+DLL DWORD WINAPI GetTempPathW(DWORD,LPWSTR);
+DLL BOOL WINAPI CreateDirectoryW(LPCWSTR,LPSECURITY_ATTRIBUTES);
+DLL BOOL WINAPI RemoveDirectoryW(LPCWSTR);
+DLL LONG WINAPI CoCreateGuid(void*);
+#endif
 DLL DWORD WINAPI SearchPathW(LPCWSTR,LPCWSTR,LPCWSTR,DWORD,LPWSTR,LPWSTR*);
 DLL BOOL WINAPI CreateProcessW(LPCWSTR,LPWSTR,LPSECURITY_ATTRIBUTES,LPSECURITY_ATTRIBUTES,BOOL,DWORD,void*,LPCWSTR,STARTUPINFOW*,PROCESS_INFORMATION*);
 DLL DWORD WINAPI WaitForSingleObject(HANDLE,DWORD);
@@ -295,6 +302,10 @@ cleanup:
   return ok;
 }
 
+#if defined(PDFUTILS_PORTABLE)
+#include "portable_runtime.c"
+#endif
+
 /* Ghostscript discovers default locations, but may also be selected manually. */
 static BOOL try_gs_at(const WCHAR *path,WCHAR *out){if(file_exists(path)){cpyw(out,MAX_PATH_CHARS,path);return TRUE;}return FALSE;}
 static BOOL check_gs_dir(const WCHAR *base,WCHAR *out){
@@ -369,6 +380,16 @@ static BOOL pdf_to_pdfa(const WCHAR *gs,const WCHAR *src,const WCHAR *dst,const 
   if(!generate_pdfa_setup(psfile,icc)){cpyw(error,200,L"Impossibile creare la definizione PDF/A");return FALSE;}
   DeleteFileW(tmp);
   command[0]=0;quote_w(command,MAX_PATH_CHARS*4,gs);
+#if defined(PDFUTILS_PORTABLE)
+  /* Portable Ghostscript must search the extracted local resources. */
+  catw(command,MAX_PATH_CHARS*4,L" -I\"");
+  catw(command,MAX_PATH_CHARS*4,portable_root);
+  catw(command,MAX_PATH_CHARS*4,L"\\Resource\\Init;");
+  catw(command,MAX_PATH_CHARS*4,portable_root);
+  catw(command,MAX_PATH_CHARS*4,L"\\Resource\\Font;");
+  catw(command,MAX_PATH_CHARS*4,portable_root);
+  catw(command,MAX_PATH_CHARS*4,L"\\lib\"");
+#endif
   catw(command,MAX_PATH_CHARS*4,L" -dSAFER -dBATCH -dNOPAUSE -dQUIET -dPDFA=2 -dPDFACompatibilityPolicy=1 -sDEVICE=pdfwrite -sColorConversionStrategy=RGB -sBlendConversionStrategy=Simple -sOutputFile=\"");
   catw(command,MAX_PATH_CHARS*4,tmp);
   catw(command,MAX_PATH_CHARS*4,L"\" ");
@@ -403,6 +424,12 @@ static DWORD WINAPI run_conversion(LPVOID context){
   WCHAR pattern[MAX_PATH_CHARS],src[MAX_PATH_CHARS],dst[MAX_PATH_CHARS],base[MAX_PATH_CHARS],icc[MAX_PATH_CHARS],error[200],m[300];
   int count=0,done=0,failed=0,skipped=0,i;
   BOOL gs_ready=file_exists(job->gs),icc_ready=profile_path(icc);
+#if defined(PDFUTILS_PORTABLE)
+  if(job->do_pdfa){
+    ui_log(L"Preparazione del motore PDF/A portatile...\r\n");
+    gs_ready=portable_prepare(job->gs);
+  }
+#endif
   cpyw(pattern,MAX_PATH_CHARS,job->folder);append_slash(pattern,MAX_PATH_CHARS);catw(pattern,MAX_PATH_CHARS,L"*");
   fh=FindFirstFileW(pattern,&data);
   if(fh==INVALID_HANDLE_VALUE){ui_log(L"ERRORE: impossibile aprire la cartella.\r\n");goto finish;}
@@ -420,7 +447,11 @@ static DWORD WINAPI run_conversion(LPVOID context){
   FindClose(fh);
   wsprintfW(m,L"Trovati %d file compatibili.\r\n",count);ui_log(m);
   if(!count){ui_log(L"Nessun JPG/JPEG o PDF originale trovato.\r\n");goto finish;}
+#if defined(PDFUTILS_PORTABLE)
+  if(job->do_pdfa && !gs_ready)ui_log(L"ERRORE: motore PDF/A non incorporato o impossibile estrarlo nella cartella temporanea.\r\n");
+#else
   if(job->do_pdfa && !gs_ready)ui_log(L"ATTENZIONE: Ghostscript non trovato. I PDF/A verranno saltati.\r\n");
+#endif
   if(job->do_pdfa && !icc_ready)ui_log(L"ATTENZIONE: profilo colore sRGB di Windows non trovato. I PDF/A verranno saltati.\r\n");
   /* JPG first; snapshot prevents newly produced PDFs being reprocessed in the same run. */
   for(i=0;i<=1;i++){
@@ -451,6 +482,9 @@ static DWORD WINAPI run_conversion(LPVOID context){
   }
   wsprintfW(m,L"Completato: %d riusciti, %d errori, %d saltati.\r\n",done,failed,skipped);ui_log(m);
 finish:
+#if defined(PDFUTILS_PORTABLE)
+  portable_cleanup();
+#endif
   while(head){node=head->next;HeapFree(GetProcessHeap(),0,head);head=node;}
   HeapFree(GetProcessHeap(),0,job);
   PostMessageW(mainWindow,WM_DONE,0,0);
@@ -486,7 +520,11 @@ static void start_job(void){
   job=(JOB*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(JOB));
   if(!job){MessageBoxW(mainWindow,L"Memoria insufficiente.",APP_NAME,0x10);return;}
   GetWindowTextW(folderControl,job->folder,MAX_PATH_CHARS);
+#if defined(PDFUTILS_PORTABLE)
+  job->gs[0]=0;
+#else
   GetWindowTextW(gsControl,job->gs,MAX_PATH_CHARS);
+#endif
   job->do_jpg=SendMessageW(jpgCheck,BM_GETCHECK,0,0)==BST_CHECKED;
   job->do_pdfa=SendMessageW(pdfaCheck,BM_GETCHECK,0,0)==BST_CHECKED;
   if(!wl(job->folder)||GetFileAttributesW(job->folder)==INVALID_FILE_ATTRIBUTES){MessageBoxW(mainWindow,L"Seleziona una cartella valida.",APP_NAME,0x30);HeapFree(GetProcessHeap(),0,job);return;}
@@ -501,7 +539,10 @@ static void start_job(void){
 static LRESULT WINAPI window_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
   switch(msg){
     case WM_CREATE:{
-      WCHAR gs[MAX_PATH_CHARS];mainWindow=hwnd;
+#if !defined(PDFUTILS_PORTABLE)
+      WCHAR gs[MAX_PATH_CHARS];
+#endif
+      mainWindow=hwnd;
       headingFont=CreateFontW(-20,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
       uiFont=CreateFontW(-16,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
       make_ctrl(L"STATIC",L"PDF Utils - convertitore batch",0,20,16,550,30,0,TRUE);
@@ -512,22 +553,32 @@ static LRESULT WINAPI window_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
       jpgCheck=make_ctrl(L"BUTTON",L"JPG/JPEG -> PDF (un PDF per immagine)",BS_AUTOCHECKBOX|WS_TABSTOP,20,150,570,23,IDC_JPG,FALSE);
       pdfaCheck=make_ctrl(L"BUTTON",L"PDF -> PDF/A-2b (archiviazione)",BS_AUTOCHECKBOX|WS_TABSTOP,20,178,570,23,IDC_PDFA,FALSE);
       SendMessageW(jpgCheck,BM_SETCHECK,BST_CHECKED,0);SendMessageW(pdfaCheck,BM_SETCHECK,BST_CHECKED,0);
+#if defined(PDFUTILS_PORTABLE)
+      make_ctrl(L"STATIC",L"PDF/A: motore incluso nell'EXE, nessuna installazione richiesta",0,20,213,590,20,0,FALSE);
+#else
       make_ctrl(L"STATIC",L"Ghostscript (necessario solo per PDF/A)",0,20,213,580,20,0,FALSE);
       gsControl=make_ctrl(L"EDIT",L"",WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,20,237,465,28,IDC_GS,FALSE);
       make_ctrl(L"BUTTON",L"Sfoglia...",WS_TABSTOP,493,237,116,28,IDC_GS_BROWSE,FALSE);
       if(find_ghostscript(gs))SetWindowTextW(gsControl,gs);
       else SetWindowTextW(gsControl,L"Ghostscript non trovato: scegli gswin64c.exe o gswin32c.exe");
+#endif
       startButton=make_ctrl(L"BUTTON",L"CONVERTI TUTTI",WS_TABSTOP,20,284,180,38,IDC_START,TRUE);
       statusControl=make_ctrl(L"STATIC",L"Pronto",0,221,294,380,25,IDC_STATUS,FALSE);
       make_ctrl(L"STATIC",L"Risultati",0,20,336,580,21,0,TRUE);
       logControl=make_ctrl(L"EDIT",L"",WS_BORDER|WS_VSCROLL|ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY,20,361,589,144,IDC_LOG,FALSE);
+#if defined(PDFUTILS_PORTABLE)
+      make_ctrl(L"STATIC",L"PDF Utils e Ghostscript: AGPL. Sorgenti: github.com/Cesare-ml/pdf-utils",0,20,515,610,19,0,FALSE);
+#else
       make_ctrl(L"STATIC",L"Originali conservati  |  output nella stessa cartella  |  PDF/A con suffisso _PDFA.pdf",0,20,515,600,19,0,FALSE);
+#endif
       return 0;
     }
     case WM_COMMAND:{
       int id=(int)(wp&0xffff);
       if(id==IDC_BROWSE&&!busy)choose_folder();
+#if !defined(PDFUTILS_PORTABLE)
       else if(id==IDC_GS_BROWSE&&!busy)choose_gs();
+#endif
       else if(id==IDC_START&&!busy)start_job();
       return 0;
     }
