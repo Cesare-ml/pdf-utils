@@ -38,7 +38,7 @@ class PortablePayloadTest(unittest.TestCase):
             (vendor / "Resource" / "Init" / "b.ps").write_text("%!PS\n")
             (vendor / "COPYING").write_text("FAKE TEST LICENSE - NOT FOR REDISTRIBUTION")
             out = root / "test.exe"
-            pack.build(base, vendor, out)
+            pack.build(base, vendor, out, allow_test_fixture=True)
             data = out.read_bytes()
             magic, start, count = struct.unpack("<8sII", data[-16:])
             self.assertEqual(magic, pack.MAGIC)
@@ -55,6 +55,23 @@ class PortablePayloadTest(unittest.TestCase):
             self.assertEqual(pos, len(data)-16)
             self.assertIn("bin/gsdll32.dll", names)
 
+
+
+    def test_fake_vendor_cannot_be_published(self):
+        base = Path(__file__).resolve().parents[1] / "dist" / "PDF-Utils-Win7-portable-base.exe"
+        if not base.exists():
+            self.skipTest("portable base not compiled")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vendor = root / "gs"; (vendor / "bin").mkdir(parents=True)
+            (vendor / "lib").mkdir()
+            (vendor / "Resource").mkdir()
+            fake = base.read_bytes()
+            (vendor / "bin" / "gswin32c.exe").write_bytes(fake)
+            (vendor / "bin" / "gsdll32.dll").write_bytes(fake)
+            (vendor / "LICENSE.txt").write_text("TEST ONLY")
+            with self.assertRaisesRegex(ValueError, "verified upstream provenance"):
+                pack.build(base, vendor, root / "fake-release.exe")
 
 if __name__ == "__main__":
     unittest.main()
