@@ -11,13 +11,13 @@ import struct
 from pathlib import Path
 
 SYSTEM_DLLS = {
-    'kernel32.dll','kernelbase.dll','user32.dll','gdi32.dll','gdi32full.dll',
+    'kernel32.dll','kernelbase.dll','user32.dll','gdi32.dll',
     'shell32.dll','ole32.dll','oleaut32.dll','advapi32.dll','rpcrt4.dll',
     'mscms.dll','comdlg32.dll','comctl32.dll','shlwapi.dll','winspool.drv',
     'ws2_32.dll','wininet.dll','urlmon.dll','dnsapi.dll','wtsapi32.dll',
     'ntdll.dll','version.dll','imm32.dll','winmm.dll','msvcrt.dll',
-    'crypt32.dll','bcrypt.dll','bcryptprimitives.dll','secur32.dll','gdi32.dll',
-    'setupapi.dll','usp10.dll','shcore.dll','dwmapi.dll','iphlpapi.dll',
+    'crypt32.dll','bcrypt.dll','secur32.dll','gdi32.dll',
+    'setupapi.dll','usp10.dll','dwmapi.dll','iphlpapi.dll',
     'psapi.dll','normaliz.dll','dbghelp.dll','mpr.dll','winhttp.dll',
     'msimg32.dll','netapi32.dll','wsock32.dll','mswsock.dll','sensapi.dll',
 }
@@ -26,7 +26,7 @@ UNSUPPORTED = {
     'GetDpiForWindow', 'SetProcessDpiAwareness', 'GetSystemTimePreciseAsFileTime',
     'GetPackageFamilyName', 'GetCurrentPackageId', 'GetCurrentPackageFullName',
     'IsWow64Process2', 'GetFileInformationByHandleEx2', 'GetThreadInformation',
-    'SetThreadInformation', 'GetFinalPathNameByHandleW'+'2',
+    'GetSystemTimePreciseAsFileTime',
     'GetProcessInformation', 'GetSystemCpuSetInformation',
 }
 
