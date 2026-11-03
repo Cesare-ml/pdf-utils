@@ -1,0 +1,9 @@
+build/
+*.obj
+*.lib
+*.tmp
+*.pdfutils.tmp
+/tests/from_jpg.pdf
+/tests/output_PDFA.pdf
+/tests/render/
+/tests/test_jpeg_native
