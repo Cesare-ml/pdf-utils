@@ -14,7 +14,7 @@ comply with the Ghostscript AGPL/commercial license before distribution.
 from __future__ import annotations
 import argparse
 import hashlib
-import os
+import importlib.util
 import struct
 from pathlib import Path
 
@@ -35,7 +35,7 @@ def pe_machine(path: Path) -> int:
         return struct.unpack_from("<H", hdr, 4)[0]
 
 
-def build(base: Path, gsdir: Path, out: Path) -> None:
+def build(base: Path, gsdir: Path, out: Path, *, allow_test_fixture: bool = False) -> None:
     base, gsdir, out = map(lambda x: x.resolve(), (base, gsdir, out))
     if out == base or gsdir == base.parent:
         raise ValueError("Output must be separate from base binary and vendor files")
@@ -49,6 +49,25 @@ def build(base: Path, gsdir: Path, out: Path) -> None:
         raise ValueError("Ghostscript lib/ and Resource/ directories are required")
     if not any((gsdir / name).is_file() for name in ("COPYING", "LICENSE", "LICENSE.txt", "AGPL-3.0.txt")):
         raise ValueError("Include the Ghostscript license text in the vendor directory")
+    if not allow_test_fixture:
+        # A release must come from the hash-checked upstream installer,
+        # not a fake/truncated file or manually copied unverified DLL.
+        notice = gsdir / "THIRD-PARTY-NOTICE.txt"
+        if not notice.is_file():
+            raise ValueError("Missing verified upstream provenance: run scripts/vendor-ghostscript.py")
+        expected = "42f9e97ea2580bc24e2604cc03a2213bdba6094869dbe9f8ede50f8dd86b7463"
+        if f"Installer SHA-256: {expected}" not in notice.read_text(encoding='ascii'):
+            raise ValueError("Unexpected Ghostscript version/checksum provenance")
+        if (gsdir / "bin" / "gsdll32.dll").stat().st_size < 1000000:
+            raise ValueError("Bundled Ghostscript DLL is implausibly small")
+        spec = importlib.util.spec_from_file_location(
+            'win7_preflight', ROOT / 'scripts' / 'check-win7-pe.py')
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        issues = mod.verify(gsdir, base)
+        if issues:
+            raise ValueError('Windows 7 static PE preflight failed:\n' + '\n'.join(issues))
     files = sorted(p for p in gsdir.rglob("*") if p.is_file())
     if not files or len(files) > 4096:
         raise ValueError("Invalid number of Ghostscript runtime files")
