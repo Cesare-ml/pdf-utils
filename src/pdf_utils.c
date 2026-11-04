@@ -487,8 +487,10 @@ static DWORD WINAPI run_conversion(LPVOID context){
   JOB *job=(JOB*)context;FILE_NODE *head=NULL,*tail=NULL,*node;WIN32_FIND_DATAW data;HANDLE fh;
   WCHAR pattern[MAX_PATH_CHARS],src[MAX_PATH_CHARS],dst[MAX_PATH_CHARS],base[MAX_PATH_CHARS],icc[MAX_PATH_CHARS],error[200],m[300];
   int count=0,done=0,failed=0,skipped=0,i;
-  BOOL gs_ready=file_exists(job->gs),icc_ready=FALSE;
-  diag_step(100,"Worker started");
+  BOOL gs_ready=FALSE,icc_ready=FALSE;
+  diag_step(100,"Worker entered successfully after stack probe");
+  gs_ready=file_exists(job->gs);
+  diag_step(105,"Ghostscript executable lookup completed");
   diag_step(110,"Looking up Windows sRGB profile");
   icc_ready=profile_path(icc);
   diag_step(120,"Enumerating input folder");
@@ -597,11 +599,16 @@ static void start_job(void){
   cpyw(diagnostic_file,MAX_PATH_CHARS,job->folder);
   append_slash(diagnostic_file,MAX_PATH_CHARS);
   if(!catw(diagnostic_file,MAX_PATH_CHARS,L"PDF-Utils-diagnostica.txt"))diagnostic_file[0]=0;
-  diag_step(10,"PDF Utils crash diagnostics v3 - start");
+  diag_step(10,"PDF Utils stack probe fix v4 - start");
+  diag_step(11,"Main thread: disabling controls");
   busy=1;EnableWindow(startButton,FALSE);EnableWindow(folderControl,FALSE);EnableWindow(gsControl,FALSE);
+  diag_step(12,"Main thread: updating controls");
   SetWindowTextW(statusControl,L"Conversione in corso...");SetWindowTextW(logControl,L"");
+  diag_step(13,"Main thread: posting UI log");
   ui_log(L"Avvio elaborazione. I file originali rimangono nella cartella.\r\n");
+  diag_step(14,"Main thread: about to create worker thread");
   thread=CreateThread(NULL,0,run_conversion,job,0,&tid);
+  diag_step(15,"Main thread: CreateThread call returned");
   if(!thread){busy=0;EnableWindow(startButton,TRUE);EnableWindow(folderControl,TRUE);EnableWindow(gsControl,TRUE);HeapFree(GetProcessHeap(),0,job);MessageBoxW(mainWindow,L"Impossibile avviare la conversione.",APP_NAME,0x10);}
   else CloseHandle(thread);
 }
@@ -611,7 +618,7 @@ static LRESULT WINAPI window_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
       WCHAR gs[MAX_PATH_CHARS];mainWindow=hwnd;
       headingFont=CreateFontW(-20,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
       uiFont=CreateFontW(-16,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
-      make_ctrl(L"STATIC",L"PDF Utils - diagnostica crash v3",0,20,16,550,30,0,TRUE);
+      make_ctrl(L"STATIC",L"PDF Utils - fix crash stack v4",0,20,16,550,30,0,TRUE);
       make_ctrl(L"STATIC",L"Cartella di lavoro",0,20,60,560,20,0,FALSE);
       folderControl=make_ctrl(L"EDIT",L"",WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,20,83,465,28,IDC_FOLDER,FALSE);
       make_ctrl(L"BUTTON",L"Sfoglia...",WS_TABSTOP,493,83,116,28,IDC_BROWSE,FALSE);
