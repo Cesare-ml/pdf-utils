@@ -37,7 +37,7 @@ def pe_machine(path: Path) -> int:
 
 def build(base: Path, gsdir: Path, out: Path, *, allow_test_fixture: bool = False) -> None:
     base, gsdir, out = map(lambda x: x.resolve(), (base, gsdir, out))
-    if out == base or gsdir == base.parent:
+    if out == base or gsdir == base.parent or out == gsdir or gsdir in out.parents:
         raise ValueError("Output must be separate from base binary and vendor files")
     if pe_machine(base) != 0x14C:
         raise ValueError("The portable launcher must be a 32-bit Windows PE")
@@ -80,27 +80,35 @@ def build(base: Path, gsdir: Path, out: Path, *, allow_test_fixture: bool = Fals
         if p.stat().st_size > 256 * 1024 * 1024:
             raise ValueError(f"Component too large: {rel}")
     out.parent.mkdir(parents=True, exist_ok=True)
-    sha = hashlib.sha256()
-    with base.open("rb") as src, out.open("wb") as dst:
-        while (chunk := src.read(1024 * 1024)):
-            dst.write(chunk)
-            sha.update(chunk)
-        start_offset = dst.tell()
-        if start_offset >= 2**31:
-            raise ValueError("Launcher too large")
-        for p in files:
-            name = p.relative_to(gsdir).as_posix().encode("ascii")
-            bloblen = p.stat().st_size
-            header = struct.pack("<HI", len(name), bloblen) + name
-            dst.write(header)
-            sha.update(header)
-            with p.open("rb") as f:
-                while (chunk := f.read(1024 * 1024)):
-                    dst.write(chunk)
-                    sha.update(chunk)
-        footer = MAGIC + struct.pack("<II", start_offset, len(files))
-        dst.write(footer)
-        sha.update(footer)
+    staged = out.with_name(out.name + ".partial")
+    if staged.exists():
+        raise ValueError("Previous unfinished package detected: " + str(staged))
+    try:
+        sha = hashlib.sha256()
+        with base.open("rb") as src, staged.open("wb") as dst:
+            while (chunk := src.read(1024 * 1024)):
+                dst.write(chunk)
+                sha.update(chunk)
+            start_offset = dst.tell()
+            if start_offset >= 2**31:
+                raise ValueError("Launcher too large")
+            for p in files:
+                name = p.relative_to(gsdir).as_posix().encode("ascii")
+                bloblen = p.stat().st_size
+                header = struct.pack("<HI", len(name), bloblen) + name
+                dst.write(header)
+                sha.update(header)
+                with p.open("rb") as f:
+                    while (chunk := f.read(1024 * 1024)):
+                        dst.write(chunk)
+                        sha.update(chunk)
+            footer = MAGIC + struct.pack("<II", start_offset, len(files))
+            dst.write(footer)
+            sha.update(footer)
+        staged.replace(out)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
     print(f"Portable executable: {out} ({out.stat().st_size:,} bytes)")
     print(f"Components bundled: {len(files)}")
     print(f"SHA256: {sha.hexdigest()}")
