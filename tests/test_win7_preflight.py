@@ -21,6 +21,24 @@ class TestWin7PE(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             self.assertEqual(pe.verify(pathlib.Path(t),launcher),[])
 
+    def test_reject_windows_81_and_windows_10_dlls(self):
+        launcher=ROOT/'dist'/'PDF-Utils-Win7-portable-base.exe'
+        if not launcher.exists():self.skipTest('launcher not yet compiled')
+        original=pe.parse_pe
+        def fake_imports(path):
+            result=original(path)
+            result['imports']={'shcore.dll':['GetDpiForMonitor'],
+                               'gdi32full.dll':['GdiGetBatchLimit']}
+            return result
+        pe.parse_pe=fake_imports
+        try:
+            with tempfile.TemporaryDirectory() as t:
+                failures=pe.verify(pathlib.Path(t),launcher)
+            self.assertTrue(any('shcore.dll' in error for error in failures))
+            self.assertTrue(any('gdi32full.dll' in error for error in failures))
+        finally:
+            pe.parse_pe=original
+
     def test_reject_non_pe_runtime(self):
         with tempfile.TemporaryDirectory() as t:
             root=pathlib.Path(t)
