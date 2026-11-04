@@ -120,3 +120,20 @@ La directory `vendor/` e l'EXE finale non vengono committati automaticamente. Pr
 Ghostscript è disponibile con licenza **AGPL-3.0** oppure licenza commerciale Artifex. Un eseguibile che incorpora e ridistribuisce Ghostscript deve soddisfare le condizioni della licenza scelta. La distribuzione AGPL richiede rispettivi avvisi, diritti e accesso al codice sorgente corrispondente delle componenti integrate; per la distribuzione proprietaria valutare licenza commerciale Artifex. Il codice originale PDF Utils, di per sé, è MIT: il pacchetto aggregato con Ghostscript è soggetto anche alle condizioni di Ghostscript. Non caricare nel repository pubblico un pacchetto privo dei necessari adempimenti.
 
 Windows 7 non riceve aggiornamenti ordinari di sicurezza: usare preferibilmente PDF da fonti fidate e disporre di backup. La conversione PDF/A è una trasformazione: verificare che nessun dato utile sia stato perso e convalidare il risultato mediante veraPDF. I file di input non vengono sovrascritti.
+### Compilazione in un unico comando (sul PC di sviluppo, NON su Windows 7)
+
+Su una macchina di compilazione con Python 3, Clang, lld-link, nm e 7-Zip disponibili:
+
+```bash
+bash scripts/release-portable.sh
+```
+
+Se il file originale `gs10080w32.exe` di Artifex è già stato scaricato:
+
+```bash
+bash scripts/release-portable.sh --installer /percorso/gs10080w32.exe
+```
+
+Lo script verifica la SHA-256 ufficiale, estrae senza installare Ghostscript, ricompila il launcher Win32 x86, verifica gli import PE, esegue i test offline e assembla `dist/PDF-Utils-Portable-Win7-Win11.exe` in modo atomico. I componenti richiesti **esistono soltanto sul PC di sviluppo**: il destinatario riceve esclusivamente l'EXE, che crea e rimuove i propri file di lavoro in `%TEMP%`. Non serve installare Python, 7-Zip, Ghostscript o altri runtime sul Windows 7 destinatario.
+
+**Convalida obbligatoria prima della distribuzione:** PC pulito Windows 7 SP1 x86 e Windows 11, verifica PDF/A-2b con veraPDF, controllo AGPL/codice sorgente corrispondente. Il superamento dei test di compilazione NON prova questi requisiti. La policy Ghostscript `PDFACompatibilityPolicy=1` può eliminare funzioni del PDF non ammesse in PDF/A, perciò conservare sempre l'originale e verificare anche il contenuto del file convertito.
