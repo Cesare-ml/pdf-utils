@@ -54,8 +54,19 @@ class PortablePayloadTest(unittest.TestCase):
                 pos += size
             self.assertEqual(pos, len(data)-16)
             self.assertIn("bin/gsdll32.dll", names)
+            self.assertFalse(out.with_name(out.name + ".partial").exists())
 
 
+
+    def test_refuses_to_place_release_inside_embedded_vendor_tree(self):
+        base = Path(__file__).resolve().parents[1] / "dist" / "PDF-Utils-Win7-portable-base.exe"
+        if not base.exists():
+            self.skipTest("portable base not compiled")
+        with tempfile.TemporaryDirectory() as tmp:
+            vendor = Path(tmp) / "ghostscript"
+            vendor.mkdir()
+            with self.assertRaisesRegex(ValueError, "separate"):
+                pack.build(base, vendor, vendor / "unsafe.exe", allow_test_fixture=True)
 
     def test_fake_vendor_cannot_be_published(self):
         base = Path(__file__).resolve().parents[1] / "dist" / "PDF-Utils-Win7-portable-base.exe"
