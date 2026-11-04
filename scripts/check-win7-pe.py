@@ -101,6 +101,8 @@ def verify(root: Path, launcher: Path) -> list[str]:
             if info['subsystem'] > (6,1):errors.append(f'{path.name}: subsystem requires newer than Win7 {info["subsystem"]}')
             if info['min_os'] > (6,1):errors.append(f'{path.name}: PE requires newer than Win7 {info["min_os"]}')
             for dll,imports in info['imports'].items():
+                if dll in ('shcore.dll', 'gdi32full.dll'):
+                    errors.append(f'{path.name}: {dll} is not a Windows 7 system DLL')
                 if dll.startswith('api-ms-win-') or dll.startswith('ext-ms-'):
                     errors.append(f'{path.name}: API-set import {dll}: compatibility unverified')
                 elif dll=='ucrtbase.dll':
