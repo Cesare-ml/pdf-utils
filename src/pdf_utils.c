@@ -16,6 +16,7 @@ typedef const WCHAR *LPCWSTR;
 typedef WCHAR *LPWSTR;
 typedef const CHAR *LPCSTR;
 typedef void *LPSECURITY_ATTRIBUTES;
+typedef struct {DWORD nLength;LPVOID lpSecurityDescriptor;BOOL bInheritHandle;} SECURITY_ATTRIBUTES;
 typedef __INTPTR_TYPE__ LRESULT;
 typedef __UINTPTR_TYPE__ WPARAM;
 typedef __INTPTR_TYPE__ LPARAM;
@@ -36,8 +37,12 @@ typedef LRESULT (__stdcall *WNDPROC)(HWND,UINT,WPARAM,LPARAM);
 #define GENERIC_READ 0x80000000u
 #define GENERIC_WRITE 0x40000000u
 #define FILE_SHARE_READ 1u
+#define STARTF_USESHOWWINDOW 0x00000001u
+#define STARTF_USESTDHANDLES 0x00000100u
 #define OPEN_EXISTING 3u
 #define CREATE_ALWAYS 2u
+#define OPEN_ALWAYS 4u
+#define FILE_END 2u
 #define FILE_ATTRIBUTE_NORMAL 0x80u
 #define FILE_ATTRIBUTE_DIRECTORY 0x10u
 #define INVALID_FILE_ATTRIBUTES 0xffffffffu
@@ -145,6 +150,7 @@ DLL BOOL WINAPI GetExitCodeProcess(HANDLE,DWORD*);
 DLL BOOL WINAPI TerminateProcess(HANDLE,UINT);
 DLL HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES,SIZE_T,DWORD (WINAPI *)(LPVOID),LPVOID,DWORD,DWORD*);
 DLL DWORD WINAPI GetLastError(void);
+DLL void *WINAPI SetUnhandledExceptionFilter(void *);
 DLL HINSTANCE WINAPI GetModuleHandleW(LPCWSTR);
 DLL void WINAPI ExitProcess(UINT);
 DLL unsigned short WINAPI RegisterClassExW(const WNDCLASSEXW*);
@@ -187,6 +193,34 @@ static BOOL catw(WCHAR *dst,UINT cap,const WCHAR *src){UINT i=wl(dst),j=0; if(i>
 static void cpyw(WCHAR *dst,UINT cap,const WCHAR *src){UINT i=0; if(!cap)return; while(src[i] && i+1<cap) {dst[i]=src[i];i++;}dst[i]=0;}
 static void cpya(CHAR *dst,UINT cap,const CHAR *src){UINT i=0;if(!cap)return;while(src[i]&&i+1<cap){dst[i]=src[i];i++;}dst[i]=0;}
 static void zmem(void *dst,UINT n){unsigned char *p=(unsigned char*)dst; UINT i;for(i=0;i<n;i++)p[i]=0;}
+/* The diagnostic is a plain ASCII text file beside input documents. This is
+   deliberately independent from Ghostscript, Windows Event Viewer and CRT. */
+static WCHAR diagnostic_file[MAX_PATH_CHARS];
+static volatile LONG diagnostic_stage = 0;
+typedef struct {DWORD ExceptionCode,ExceptionFlags;void *ExceptionRecord,*ExceptionAddress;} DIAG_EXCEPTION_RECORD;
+typedef struct {DIAG_EXCEPTION_RECORD *ExceptionRecord;void *ContextRecord;} DIAG_EXCEPTION_POINTERS;
+static void diag_write(const CHAR *message){
+  HANDLE f;DWORD size,written;
+  if(!diagnostic_file[0]||!message)return;
+  f=CreateFileW(diagnostic_file,GENERIC_WRITE,FILE_SHARE_READ,NULL,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+  if(f==INVALID_HANDLE_VALUE)return;
+  size=GetFileSize(f,NULL);
+  if(size!=0xffffffffu&&size<262144u){
+    SetFilePointer(f,0,NULL,FILE_END);
+    WriteFile(f,message,(DWORD)al(message),&written,NULL);
+    WriteFile(f,"\r\n",2,&written,NULL);
+  }
+  CloseHandle(f);
+}
+static void diag_step(LONG stage,const CHAR *message){diagnostic_stage=stage;diag_write(message);}
+static LONG WINAPI diag_unhandled(DIAG_EXCEPTION_POINTERS *p){
+  CHAR buf[180];DWORD code=0;
+  if(p && p->ExceptionRecord)code=p->ExceptionRecord->ExceptionCode;
+  wsprintfA(buf,"UNHANDLED_EXCEPTION=0x%08X STAGE=%u",code,(DWORD)diagnostic_stage);
+  diag_write(buf);
+  return 1; /* EXCEPTION_EXECUTE_HANDLER, fail closed; diagnostic survives */
+}
+
 static BOOL file_exists(const WCHAR *name){DWORD a=GetFileAttributesW(name);return a!=INVALID_FILE_ATTRIBUTES && !(a&FILE_ATTRIBUTE_DIRECTORY);}
 static void append_slash(WCHAR *s,UINT cap){UINT n=wl(s);if(n && s[n-1]!='\\' && s[n-1]!='/')catw(s,cap,L"\\");}
 static void quote_w(WCHAR *s,UINT cap,const WCHAR *part){catw(s,cap,L"\"");catw(s,cap,part);catw(s,cap,L"\"");}
@@ -284,6 +318,7 @@ static BOOL jpeg_to_pdf(const WCHAR *src,const WCHAR *dst,WCHAR *error){
   wsprintfA(buf,"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%u\n%%%%EOF\n",xref);
   if(!write_ascii(out,buf))goto io_fail;
   CloseHandle(out);out=INVALID_HANDLE_VALUE;
+  diag_step(350,"PDF/A: moving successful result into place");
   if(!MoveFileExW(tmp,dst,MOVEFILE_REPLACE_EXISTING)){errw(error,200,GetLastError());goto cleanup;}
   ok=TRUE;goto cleanup;
 io_fail:cpyw(error,200,L"Errore scrittura PDF");
@@ -326,7 +361,7 @@ static BOOL find_ghostscript(WCHAR *out){
   return FALSE;
 }
 static BOOL profile_path(WCHAR *out){
-  DWORD len=MAX_PATH_CHARS*2;
+  DWORD len=MAX_PATH_CHARS;
   UINT n;
   /* Windows color management API avoids WOW64 System32 path redirection. */
   if(GetColorDirectoryW(NULL,out,&len)){
@@ -361,25 +396,72 @@ static BOOL generate_pdfa_setup(const WCHAR *psfile,const WCHAR *iccpath){
   ok=write_ascii(h,b);CloseHandle(h);if(!ok)DeleteFileW(psfile);return ok;
 }
 static BOOL pdf_to_pdfa(const WCHAR *gs,const WCHAR *src,const WCHAR *dst,const WCHAR *icc,WCHAR *error){
-  WCHAR psfile[MAX_PATH_CHARS],tmp[MAX_PATH_CHARS],command[MAX_PATH_CHARS*4];HANDLE process=INVALID_HANDLE_VALUE;
-  STARTUPINFOW si;PROCESS_INFORMATION pi;DWORD status,exitcode=1;BOOL ok=FALSE;
+  WCHAR psfile[MAX_PATH_CHARS],tmp[MAX_PATH_CHARS],logfile[MAX_PATH_CHARS],iccallow[MAX_PATH_CHARS],command[MAX_PATH_CHARS*4];
+  HANDLE process=INVALID_HANDLE_VALUE,log=INVALID_HANDLE_VALUE,nul=INVALID_HANDLE_VALUE;
+  SECURITY_ATTRIBUTES sa;STARTUPINFOW si;PROCESS_INFORMATION pi;
+  DWORD status,exitcode=1;BOOL ok=FALSE;
   if(!output_temp_path(dst,tmp)){cpyw(error,200,L"Percorso di uscita troppo lungo");return FALSE;}
   cpyw(psfile,MAX_PATH_CHARS,tmp);
   if(!catw(psfile,MAX_PATH_CHARS,L".ps")){cpyw(error,200,L"Percorso temporaneo troppo lungo");return FALSE;}
+  cpyw(logfile,MAX_PATH_CHARS,dst);
+  if(!catw(logfile,MAX_PATH_CHARS,L".ghostscript.log")){cpyw(error,200,L"Percorso log troppo lungo");return FALSE;}
+  diag_step(310,"PDF/A: preparing PostScript and ICC definition");
   if(!generate_pdfa_setup(psfile,icc)){cpyw(error,200,L"Impossibile creare la definizione PDF/A");return FALSE;}
   DeleteFileW(tmp);
-  command[0]=0;quote_w(command,MAX_PATH_CHARS*4,gs);
-  catw(command,MAX_PATH_CHARS*4,L" -dSAFER -dBATCH -dNOPAUSE -dQUIET -dPDFA=2 -dPDFACompatibilityPolicy=1 -sDEVICE=pdfwrite -sColorConversionStrategy=RGB -sBlendConversionStrategy=Simple -sOutputFile=\"");
+  command[0]=0;
+  quote_w(command,MAX_PATH_CHARS*4,gs);
+#if defined(PDFUTILS_PORTABLE)
+  /* Portable Ghostscript must search the extracted local resources. */
+  catw(command,MAX_PATH_CHARS*4,L" -I\"");
+  catw(command,MAX_PATH_CHARS*4,portable_root);
+  catw(command,MAX_PATH_CHARS*4,L"\\Resource\\Init;");
+  catw(command,MAX_PATH_CHARS*4,portable_root);
+  catw(command,MAX_PATH_CHARS*4,L"\\Resource\\Font;");
+  catw(command,MAX_PATH_CHARS*4,portable_root);
+  catw(command,MAX_PATH_CHARS*4,L"\\lib\"");
+#endif
+  /* Ghostscript's SAFER sandbox blocks arbitrary ICC profile reads by default.
+     The sole extra read permission is for the profile selected by Windows ICM. */
+  cpyw(iccallow,MAX_PATH_CHARS,icc);
+  {UINT j;for(j=0;iccallow[j];j++)if(iccallow[j]=='\\')iccallow[j]='/';}
+  catw(command,MAX_PATH_CHARS*4,L" --permit-file-read=");
+  quote_w(command,MAX_PATH_CHARS*4,iccallow);
+  catw(command,MAX_PATH_CHARS*4,L" -dSAFER -dBATCH -dNOPAUSE -dPDFA=2 -dPDFACompatibilityPolicy=1 -sDEVICE=pdfwrite -sColorConversionStrategy=RGB -sBlendConversionStrategy=Simple -sOutputFile=\"");
   catw(command,MAX_PATH_CHARS*4,tmp);
   catw(command,MAX_PATH_CHARS*4,L"\" ");
   quote_w(command,MAX_PATH_CHARS*4,psfile);
   catw(command,MAX_PATH_CHARS*4,L" ");quote_w(command,MAX_PATH_CHARS*4,src);
-  zmem(&si,sizeof(si));zmem(&pi,sizeof(pi));si.cb=sizeof(si);si.dwFlags=1;si.wShowWindow=SW_HIDE;
-  if(!CreateProcessW(gs,command,NULL,NULL,FALSE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)) {errw(error,200,GetLastError());goto cleanup;}
+
+  /* Redirect both stdout and stderr into a per-file diagnostic report.
+     Without handles, a GUI program hides all Ghostscript error messages. */
+  zmem(&sa,sizeof(sa));sa.nLength=sizeof(sa);sa.bInheritHandle=TRUE;
+  log=CreateFileW(logfile,GENERIC_WRITE,FILE_SHARE_READ,&sa,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+  if(log==INVALID_HANDLE_VALUE){errw(error,200,GetLastError());goto cleanup;}
+  nul=CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ,&sa,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+  if(nul==INVALID_HANDLE_VALUE){errw(error,200,GetLastError());goto cleanup;}
+  zmem(&si,sizeof(si));zmem(&pi,sizeof(pi));
+  si.cb=sizeof(si);si.dwFlags=STARTF_USESHOWWINDOW|STARTF_USESTDHANDLES;si.wShowWindow=SW_HIDE;
+  si.hStdInput=nul;si.hStdOutput=log;si.hStdError=log;
+  diag_step(320,"PDF/A: calling CreateProcessW Ghostscript");
+  if(!CreateProcessW(gs,command,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&pi)){
+    {CHAR b[130];wsprintfA(b,"CreateProcessW FAILED: GetLastError=%u",GetLastError());diag_write(b);}
+    errw(error,200,GetLastError());goto cleanup;
+  }
   process=pi.hProcess;CloseHandle(pi.hThread);
+  CloseHandle(log);log=INVALID_HANDLE_VALUE;
+  CloseHandle(nul);nul=INVALID_HANDLE_VALUE;
+  diag_step(330,"PDF/A: Ghostscript process started; waiting");
   status=WaitForSingleObject(process,300000u);
-  if(status!=WAIT_OBJECT_0){TerminateProcess(process,1);cpyw(error,200,L"Timeout Ghostscript (5 minuti)");goto cleanup;}
-  if(!GetExitCodeProcess(process,&exitcode)||exitcode!=0){WCHAR m[200];wsprintfW(m,L"Ghostscript ha restituito codice %u",exitcode);cpyw(error,200,m);goto cleanup;}
+  if(status!=WAIT_OBJECT_0){
+    TerminateProcess(process,1);
+    WaitForSingleObject(process,10000u);
+    cpyw(error,200,L"Timeout/errore di attesa Ghostscript (5 minuti)");goto cleanup;
+  }
+  diag_step(340,"PDF/A: checking Ghostscript exit code");
+  if(!GetExitCodeProcess(process,&exitcode)||exitcode!=0){
+    WCHAR m[200];CHAR diag[120];wsprintfA(diag,"Ghostscript exit code=%u",exitcode);diag_write(diag);
+    wsprintfW(m,L"Ghostscript: errore, codice %u",exitcode);cpyw(error,200,m);goto cleanup;
+  }
   if(!file_exists(tmp)){cpyw(error,200,L"Ghostscript non ha generato un PDF/A");goto cleanup;}
   {HANDLE h=CreateFileW(tmp,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);DWORD size;
     if(h==INVALID_HANDLE_VALUE){cpyw(error,200,L"Impossibile leggere PDF/A generato");goto cleanup;}
@@ -390,8 +472,11 @@ static BOOL pdf_to_pdfa(const WCHAR *gs,const WCHAR *src,const WCHAR *dst,const 
   ok=TRUE;
 cleanup:
   if(process!=INVALID_HANDLE_VALUE)CloseHandle(process);
+  if(nul!=INVALID_HANDLE_VALUE)CloseHandle(nul);
+  if(log!=INVALID_HANDLE_VALUE)CloseHandle(log);
   DeleteFileW(psfile);
   if(!ok)DeleteFileW(tmp);
+  if(ok)DeleteFileW(logfile); /* preserve Ghostscript output on failure */
   return ok;
 }
 
@@ -402,7 +487,11 @@ static DWORD WINAPI run_conversion(LPVOID context){
   JOB *job=(JOB*)context;FILE_NODE *head=NULL,*tail=NULL,*node;WIN32_FIND_DATAW data;HANDLE fh;
   WCHAR pattern[MAX_PATH_CHARS],src[MAX_PATH_CHARS],dst[MAX_PATH_CHARS],base[MAX_PATH_CHARS],icc[MAX_PATH_CHARS],error[200],m[300];
   int count=0,done=0,failed=0,skipped=0,i;
-  BOOL gs_ready=file_exists(job->gs),icc_ready=profile_path(icc);
+  BOOL gs_ready=file_exists(job->gs),icc_ready=FALSE;
+  diag_step(100,"Worker started");
+  diag_step(110,"Looking up Windows sRGB profile");
+  icc_ready=profile_path(icc);
+  diag_step(120,"Enumerating input folder");
   cpyw(pattern,MAX_PATH_CHARS,job->folder);append_slash(pattern,MAX_PATH_CHARS);catw(pattern,MAX_PATH_CHARS,L"*");
   fh=FindFirstFileW(pattern,&data);
   if(fh==INVALID_HANDLE_VALUE){ui_log(L"ERRORE: impossibile aprire la cartella.\r\n");goto finish;}
@@ -419,9 +508,10 @@ static DWORD WINAPI run_conversion(LPVOID context){
   }while(FindNextFileW(fh,&data));
   FindClose(fh);
   wsprintfW(m,L"Trovati %d file compatibili.\r\n",count);ui_log(m);
+  {CHAR b[100];wsprintfA(b,"Eligible input file count=%d",count);diag_write(b);}
   if(!count){ui_log(L"Nessun JPG/JPEG o PDF originale trovato.\r\n");goto finish;}
-  if(job->do_pdfa && !gs_ready)ui_log(L"ATTENZIONE: Ghostscript non trovato. I PDF/A verranno saltati.\r\n");
-  if(job->do_pdfa && !icc_ready)ui_log(L"ATTENZIONE: profilo colore sRGB di Windows non trovato. I PDF/A verranno saltati.\r\n");
+  if(job->do_pdfa && !gs_ready){diag_write("Ghostscript executable path missing");ui_log(L"ATTENZIONE: Ghostscript non trovato. I PDF/A verranno saltati.\r\n");}
+  if(job->do_pdfa && !icc_ready){diag_write("Windows sRGB ICC profile missing");ui_log(L"ATTENZIONE: profilo colore sRGB di Windows non trovato. I PDF/A verranno saltati.\r\n");}
   /* JPG first; snapshot prevents newly produced PDFs being reprocessed in the same run. */
   for(i=0;i<=1;i++){
     for(node=head;node;node=node->next){
@@ -443,13 +533,23 @@ static DWORD WINAPI run_conversion(LPVOID context){
       error[0]=0;
       if(node->is_pdf){
         if(!gs_ready||!icc_ready){skipped++;ui_log_file(L"[SALTATO] ",node->name);continue;}
+        diag_step(300,"Starting PDF/A conversion of next input");
         ok=pdf_to_pdfa(job->gs,src,dst,icc,error);
+        diag_step(360,"Returned from PDF/A conversion function");
       }else ok=jpeg_to_pdf(src,dst,error);
       if(ok){done++;ui_log_file(L"[OK] ",node->name);}
-      else {failed++;ui_log_file(L"[ERRORE] ",node->name);ui_log_file(L"    ",error);}
+      else {
+        failed++;ui_log_file(L"[ERRORE] ",node->name);ui_log_file(L"    ",error);
+        if(node->is_pdf){
+          WCHAR diag[MAX_PATH_CHARS];cpyw(diag,MAX_PATH_CHARS,dst);
+          if(catw(diag,MAX_PATH_CHARS,L".ghostscript.log")&&file_exists(diag))
+            ui_log_file(L"    Dettagli Ghostscript: ",diag);
+        }
+      }
     }
   }
   wsprintfW(m,L"Completato: %d riusciti, %d errori, %d saltati.\r\n",done,failed,skipped);ui_log(m);
+  diag_step(900,"Batch complete");
 finish:
   while(head){node=head->next;HeapFree(GetProcessHeap(),0,head);head=node;}
   HeapFree(GetProcessHeap(),0,job);
@@ -491,6 +591,13 @@ static void start_job(void){
   job->do_pdfa=SendMessageW(pdfaCheck,BM_GETCHECK,0,0)==BST_CHECKED;
   if(!wl(job->folder)||GetFileAttributesW(job->folder)==INVALID_FILE_ATTRIBUTES){MessageBoxW(mainWindow,L"Seleziona una cartella valida.",APP_NAME,0x30);HeapFree(GetProcessHeap(),0,job);return;}
   if(!job->do_jpg&&!job->do_pdfa){MessageBoxW(mainWindow,L"Seleziona almeno una conversione.",APP_NAME,0x30);HeapFree(GetProcessHeap(),0,job);return;}
+  /* Initialize trace BEFORE starting the worker. Leave it on disk even if the
+     application terminates while Ghostscript has not yet created a log. */
+  diagnostic_file[0]=0;
+  cpyw(diagnostic_file,MAX_PATH_CHARS,job->folder);
+  append_slash(diagnostic_file,MAX_PATH_CHARS);
+  if(!catw(diagnostic_file,MAX_PATH_CHARS,L"PDF-Utils-diagnostica.txt"))diagnostic_file[0]=0;
+  diag_step(10,"PDF Utils crash diagnostics v3 - start");
   busy=1;EnableWindow(startButton,FALSE);EnableWindow(folderControl,FALSE);EnableWindow(gsControl,FALSE);
   SetWindowTextW(statusControl,L"Conversione in corso...");SetWindowTextW(logControl,L"");
   ui_log(L"Avvio elaborazione. I file originali rimangono nella cartella.\r\n");
@@ -504,7 +611,7 @@ static LRESULT WINAPI window_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
       WCHAR gs[MAX_PATH_CHARS];mainWindow=hwnd;
       headingFont=CreateFontW(-20,0,0,0,FW_BOLD,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
       uiFont=CreateFontW(-16,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
-      make_ctrl(L"STATIC",L"PDF Utils - convertitore batch",0,20,16,550,30,0,TRUE);
+      make_ctrl(L"STATIC",L"PDF Utils - diagnostica crash v3",0,20,16,550,30,0,TRUE);
       make_ctrl(L"STATIC",L"Cartella di lavoro",0,20,60,560,20,0,FALSE);
       folderControl=make_ctrl(L"EDIT",L"",WS_BORDER|ES_AUTOHSCROLL|WS_TABSTOP,20,83,465,28,IDC_FOLDER,FALSE);
       make_ctrl(L"BUTTON",L"Sfoglia...",WS_TABSTOP,493,83,116,28,IDC_BROWSE,FALSE);
@@ -541,6 +648,7 @@ static LRESULT WINAPI window_proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
 void WinMainCRTStartup(void){
   WNDCLASSEXW cl;MSG message;HWND win;zmem(&cl,sizeof(cl));
   appInstance=GetModuleHandleW(NULL);
+  SetUnhandledExceptionFilter((void*)diag_unhandled);
   cl.cbSize=sizeof(cl);cl.lpfnWndProc=window_proc;cl.hInstance=appInstance;
   cl.hCursor=LoadCursorW(NULL,IDC_ARROW);cl.hbrBackground=(HBRUSH)(LONGLONG)(COLOR_WINDOW+1);
   cl.lpszClassName=L"PdfUtilsNativeWindowV1";
