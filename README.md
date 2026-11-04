@@ -68,3 +68,72 @@ Per PDF/A si può testare il comando Ghostscript e il profilo ICC locale, verifi
 ## Test
 
 L'engine JPG è stato testato mediante harness nativo su Linux, con PDF risultante leggibile da Poppler e Ghostscript. Il setup Ghostscript PDF/A-2b è stato testato con Ghostscript 10.05.1 su Linux, producendo XMP PDF/A-2b. I due eseguibili Windows sono compilati come PE con subsystem 6.01 e librerie di sistema disponibili su Windows 7. **Non è stato possibile eseguirli su un'installazione reale Windows 7/11 in questa sessione:** serve un test finale sui due sistemi operativi prima di una distribuzione in produzione.
+
+## Requisito Win7: consegnare **un solo EXE**, senza installazione (nuovo lavoro)
+
+**Attenzione:** le release `PDF-Utils-x86.exe` e `PDF-Utils-x64.exe` pubblicate in precedenza **non sono ancora un prodotto unico autosufficiente per entrambe le conversioni**. La modalità PDF/A di quei file richiede Ghostscript installato e compatibile. Non distribuirli come soluzione autonoma completa.
+
+È stata introdotta una modalità di compilazione `PDFUTILS_PORTABLE=1`: produce un launcher Win32 **x86** (avviabile sia su Windows 7 32/64 bit, sia su Windows 11 x64) che legge un pacchetto Ghostscript **incorporato nello stesso EXE** e lo estrae in una cartella temporanea isolata, creata per ogni elaborazione con identificatore casuale. Alla fine tenta di cancellarla. L'utente non deve installare alcun software né disporre di privilegi amministrativi, ma deve avere diritto di scrittura nella cartella temporanea e nella cartella selezionata.
+
+### Creazione della release single-file
+
+### Preparazione automatica del motore ufficiale (solo sul computer di sviluppo)
+
+Per il **destinatario Windows 7 non sono richiesti né 7-Zip né Ghostscript né Python**. Questi strumenti servono solo a chi costruisce il file EXE da consegnare.
+
+Sul computer di sviluppo, con connessione Internet e 7-Zip a riga di comando:
+
+```bash
+python3 scripts/vendor-ghostscript.py
+PDFUTILS_PORTABLE=1 bash scripts/build-cross.sh
+python3 scripts/check-win7-pe.py --launcher dist/PDF-Utils-Win7-portable-base.exe --ghostscript vendor/ghostscript-win32
+python3 -m unittest discover -s tests -v
+python3 scripts/package-portable.py --ghostscript vendor/ghostscript-win32
+```
+
+`vendor-ghostscript.py` scarica esclusivamente l'installer **ufficiale Ghostscript Win32 10.08.0** (`gs10080w32.exe`), ne verifica **SHA-256** contro il valore pubblicato dall'editore (`42f9e97ea2580bc24e2604cc03a2213bdba6094869dbe9f8ede50f8dd86b7463`), poi lo **estrae senza installarlo**. È possibile usare un installer già scaricato con `--installer /percorso/gs10080w32.exe`.
+
+L'operazione di confezionamento rifiuta componenti non provenienti da questa preparazione verificata, DLL che sembrano tronche e import di librerie incompatibili con un Windows 7 pulito. La verifica statica degli import non sostituisce il **collaudo obbligatorio su una macchina Windows 7 SP1 32-bit reale**. La versione Ghostscript 10.08.0 non è ancora stata dichiarata compatibile con Windows 7 dal nostro collaudo.
+
+La directory `vendor/` e l'EXE finale non vengono committati automaticamente. Prima di distribuirli è necessario adempiere agli obblighi di licenza **AGPL-3.0** (o avere licenza commerciale Artifex), rendere disponibili i sorgenti corrispondenti e ottenere una conversione PDF/A-2b validata con veraPDF. Il destinatario riceverà **un solo EXE**, ma questa release non è ancora verificata e **non va distribuita come prodotto finale**.
+
+
+1. Preparare una distribuzione ufficiale **Ghostscript Win32 a 32 bit** compatibile *realmente* con Windows 7 SP1, con `bin/gswin32c.exe`, `bin/gsdll32.dll`, `lib/`, `Resource/`, file di licenza e tutte le DLL richieste (inclusi eventuali runtime VC++ non preinstallati). **Non basta** un installer Ghostscript: bisogna estrarre i suoi file in una directory di preparazione sul PC di sviluppo; l'utente finale non installa nulla.
+2. Collocare i file estratti in `vendor/ghostscript-win32/` mantenendo le sottocartelle.
+3. Compilare il launcher:
+
+   ```bash
+   PDFUTILS_PORTABLE=1 bash scripts/build-cross.sh
+   ```
+4. Generare un unico EXE auto-contenuto:
+
+   ```bash
+   python3 scripts/package-portable.py --ghostscript vendor/ghostscript-win32
+   ```
+
+   Output: `dist/PDF-Utils-Portable-Win7-Win11.exe`.
+
+5. Testare **su Windows 7 SP1 32-bit pulito**, senza Ghostscript o .NET aggiuntivi, e su Windows 11, con PDF di prova multipagina, documenti contenenti font incorporati/non incorporati, colori diversi, nomi file accentati e cartelle con spazi. Verificare il PDF/A con veraPDF. Verificare se il motore Ghostscript scaricato richiede API Windows introdotte dopo Windows 7 e fare scansione degli import PE di tutte le DLL. **Queste prove non sono ancora completate; non pubblicare l'EXE finale finché non hanno successo.**
+
+### Licenza e sicurezza
+
+Ghostscript è disponibile con licenza **AGPL-3.0** oppure licenza commerciale Artifex. Un eseguibile che incorpora e ridistribuisce Ghostscript deve soddisfare le condizioni della licenza scelta. La distribuzione AGPL richiede rispettivi avvisi, diritti e accesso al codice sorgente corrispondente delle componenti integrate; per la distribuzione proprietaria valutare licenza commerciale Artifex. Il codice originale PDF Utils, di per sé, è MIT: il pacchetto aggregato con Ghostscript è soggetto anche alle condizioni di Ghostscript. Non caricare nel repository pubblico un pacchetto privo dei necessari adempimenti.
+
+Windows 7 non riceve aggiornamenti ordinari di sicurezza: usare preferibilmente PDF da fonti fidate e disporre di backup. La conversione PDF/A è una trasformazione: verificare che nessun dato utile sia stato perso e convalidare il risultato mediante veraPDF. I file di input non vengono sovrascritti.
+### Compilazione in un unico comando (sul PC di sviluppo, NON su Windows 7)
+
+Su una macchina di compilazione con Python 3, Clang, lld-link, nm e 7-Zip disponibili:
+
+```bash
+bash scripts/release-portable.sh
+```
+
+Se il file originale `gs10080w32.exe` di Artifex è già stato scaricato:
+
+```bash
+bash scripts/release-portable.sh --installer /percorso/gs10080w32.exe
+```
+
+Lo script verifica la SHA-256 ufficiale, estrae senza installare Ghostscript, ricompila il launcher Win32 x86, verifica gli import PE, esegue i test offline e assembla `dist/PDF-Utils-Portable-Win7-Win11.exe` in modo atomico. I componenti richiesti **esistono soltanto sul PC di sviluppo**: il destinatario riceve esclusivamente l'EXE, che crea e rimuove i propri file di lavoro in `%TEMP%`. Non serve installare Python, 7-Zip, Ghostscript o altri runtime sul Windows 7 destinatario.
+
+**Convalida obbligatoria prima della distribuzione:** PC pulito Windows 7 SP1 x86 e Windows 11, verifica PDF/A-2b con veraPDF, controllo AGPL/codice sorgente corrispondente. Il superamento dei test di compilazione NON prova questi requisiti. La policy Ghostscript `PDFACompatibilityPolicy=1` può eliminare funzioni del PDF non ammesse in PDF/A, perciò conservare sempre l'originale e verificare anche il contenuto del file convertito.

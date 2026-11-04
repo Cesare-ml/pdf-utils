@@ -7,3 +7,7 @@ build/
 /tests/output_PDFA.pdf
 /tests/render/
 /tests/test_jpeg_native
+vendor/
+dist/PDF-Utils-Win7-portable-base.exe
+dist/PDF-Utils-Portable-Win7-Win11.exe
+__pycache__/
