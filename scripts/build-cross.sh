@@ -7,7 +7,7 @@ python3 - <<'PY'
 import re, pathlib
 src=pathlib.Path('src/pdf_utils.c').read_text()
 for dll,names in {
-    'kernel32':['GetProcessHeap','HeapAlloc','HeapFree','CreateFileW','ReadFile','WriteFile','CloseHandle','GetFileSize','SetFilePointer','GetFileAttributesW','DeleteFileW','MoveFileExW','FindFirstFileW','FindNextFileW','FindClose','GetModuleFileNameW','GetSystemDirectoryW','GetEnvironmentVariableW','SearchPathW','CreateProcessW','WaitForSingleObject','GetExitCodeProcess','TerminateProcess','CreateThread','GetLastError','ExitProcess','GetModuleHandleW'],
+    'kernel32':['GetProcessHeap','HeapAlloc','HeapFree','CreateFileW','ReadFile','WriteFile','CloseHandle','GetFileSize','SetFilePointer','GetFileAttributesW','DeleteFileW','MoveFileExW','FindFirstFileW','FindNextFileW','FindClose','GetModuleFileNameW','GetSystemDirectoryW','GetEnvironmentVariableW','SearchPathW','CreateProcessW','WaitForSingleObject','GetExitCodeProcess','TerminateProcess','CreateThread','GetLastError','ExitProcess','GetModuleHandleW','SetUnhandledExceptionFilter'],
     'user32':['RegisterClassExW','CreateWindowExW','DefWindowProcW','ShowWindow','UpdateWindow','GetMessageW','TranslateMessage','DispatchMessageW','PostQuitMessage','LoadCursorW','SendMessageW','PostMessageW','SetWindowTextW','GetWindowTextW','MessageBoxW','EnableWindow','wsprintfA','wsprintfW'],
     'gdi32':['CreateFontW','DeleteObject'],
     'shell32':['SHBrowseForFolderW','SHGetPathFromIDListW'],
@@ -20,7 +20,8 @@ PY
 for arch in x64 x86; do
   if [ "$arch" = x64 ];then target=x86_64-pc-windows-msvc;else target=i686-pc-windows-msvc;fi
   mkdir -p "build/$arch"
-  clang -target "$target" -O2 -fshort-wchar -fno-builtin -fno-stack-protector -mno-stack-arg-probe -ffreestanding -Werror -Wall -Wno-unused-function -c src/pdf_utils.c -o "build/$arch/pdf_utils.obj"
+  clang -target "$target" -O2 -fshort-wchar -fno-builtin -fno-stack-protector -ffreestanding -Werror -Wall -Wno-unused-function -c src/pdf_utils.c -o "build/$arch/pdf_utils.obj"
+  clang -target "$target" -c src/stack_probe.c -o "build/$arch/stack_probe.obj"
   if [ "$arch" = x86 ]; then
      python3 - <<'PY2'
 import pathlib,re,subprocess
@@ -42,6 +43,6 @@ PY2
      if [ "$arch" = x86 ];then definition="build/x86/$dll.def";fi
      lld-link /lib "/def:$definition" "/machine:$arch" "/out:build/$arch/$dll.lib"
   done
-  lld-link /subsystem:windows,6.1 /entry:WinMainCRTStartup /nodefaultlib "/machine:$arch" "/out:dist/PDF-Utils-$arch.exe" "build/$arch/pdf_utils.obj" build/$arch/*.lib
+  lld-link /subsystem:windows,6.1 /entry:WinMainCRTStartup /nodefaultlib "/machine:$arch" "/out:dist/PDF-Utils-$arch.exe" "build/$arch/pdf_utils.obj" "build/$arch/stack_probe.obj" build/$arch/*.lib
   file "dist/PDF-Utils-$arch.exe"
 done
