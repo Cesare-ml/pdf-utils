@@ -10,7 +10,7 @@ class TestCrashDiagnostics(unittest.TestCase):
         self.assertIn('UNHANDLED_EXCEPTION=0x%08X STAGE=%u', SOURCE)
 
     def test_step_log_created_before_thread(self):
-        self.assertLess(SOURCE.index('diag_step(10,"PDF Utils crash diagnostics v3 - start")'),
+        self.assertLess(SOURCE.index('diag_step(10,"PDF Utils stack probe fix v4 - start")'),
                         SOURCE.index('thread=CreateThread('))
         self.assertIn('PDF-Utils-diagnostica.txt', SOURCE)
 
