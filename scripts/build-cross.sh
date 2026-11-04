@@ -7,7 +7,7 @@ python3 - <<'PY'
 import re, pathlib
 src=pathlib.Path('src/pdf_utils.c').read_text()
 for dll,names in {
-    'kernel32':['GetProcessHeap','HeapAlloc','HeapFree','CreateFileW','ReadFile','WriteFile','CloseHandle','GetFileSize','SetFilePointer','GetFileAttributesW','DeleteFileW','MoveFileExW','FindFirstFileW','FindNextFileW','FindClose','GetModuleFileNameW','GetSystemDirectoryW','GetEnvironmentVariableW','SearchPathW','CreateProcessW','WaitForSingleObject','GetExitCodeProcess','TerminateProcess','CreateThread','GetLastError','ExitProcess','GetModuleHandleW'],
+    'kernel32':['GetProcessHeap','HeapAlloc','HeapFree','CreateFileW','ReadFile','WriteFile','CloseHandle','GetFileSize','SetFilePointer','GetFileAttributesW','DeleteFileW','MoveFileExW','FindFirstFileW','FindNextFileW','FindClose','GetModuleFileNameW','GetSystemDirectoryW','GetEnvironmentVariableW','SearchPathW','CreateProcessW','WaitForSingleObject','GetExitCodeProcess','TerminateProcess','CreateThread','GetLastError','ExitProcess','GetModuleHandleW','SetUnhandledExceptionFilter'],
     'user32':['RegisterClassExW','CreateWindowExW','DefWindowProcW','ShowWindow','UpdateWindow','GetMessageW','TranslateMessage','DispatchMessageW','PostQuitMessage','LoadCursorW','SendMessageW','PostMessageW','SetWindowTextW','GetWindowTextW','MessageBoxW','EnableWindow','wsprintfA','wsprintfW'],
     'gdi32':['CreateFontW','DeleteObject'],
     'shell32':['SHBrowseForFolderW','SHGetPathFromIDListW'],
