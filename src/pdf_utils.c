@@ -422,14 +422,8 @@ static void remove_extension(WCHAR *file){UINT n=wl(file);while(n>0){if(file[n-1
 static DWORD WINAPI run_conversion(LPVOID context){
   JOB *job=(JOB*)context;FILE_NODE *head=NULL,*tail=NULL,*node;WIN32_FIND_DATAW data;HANDLE fh;
   WCHAR pattern[MAX_PATH_CHARS],src[MAX_PATH_CHARS],dst[MAX_PATH_CHARS],base[MAX_PATH_CHARS],icc[MAX_PATH_CHARS],error[200],m[300];
-  int count=0,done=0,failed=0,skipped=0,i;
+  int count=0,pdf_count=0,done=0,failed=0,skipped=0,i;
   BOOL gs_ready=file_exists(job->gs),icc_ready=profile_path(icc);
-#if defined(PDFUTILS_PORTABLE)
-  if(job->do_pdfa){
-    ui_log(L"Preparazione del motore PDF/A portatile...\r\n");
-    gs_ready=portable_prepare(job->gs);
-  }
-#endif
   cpyw(pattern,MAX_PATH_CHARS,job->folder);append_slash(pattern,MAX_PATH_CHARS);catw(pattern,MAX_PATH_CHARS,L"*");
   fh=FindFirstFileW(pattern,&data);
   if(fh==INVALID_HANDLE_VALUE){ui_log(L"ERRORE: impossibile aprire la cartella.\r\n");goto finish;}
@@ -442,17 +436,22 @@ static DWORD WINAPI run_conversion(LPVOID context){
     node=(FILE_NODE*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(FILE_NODE));
     if(!node){ui_log(L"ERRORE: memoria insufficiente per la lista file.\r\n");break;}
     cpyw(node->name,260,data.cFileName);node->is_pdf=is_pdf;
-    if(tail)tail->next=node;else head=node;tail=node;count++;
+    if(tail)tail->next=node;else head=node;tail=node;count++;if(is_pdf)pdf_count++;
   }while(FindNextFileW(fh,&data));
   FindClose(fh);
   wsprintfW(m,L"Trovati %d file compatibili.\r\n",count);ui_log(m);
   if(!count){ui_log(L"Nessun JPG/JPEG o PDF originale trovato.\r\n");goto finish;}
 #if defined(PDFUTILS_PORTABLE)
-  if(job->do_pdfa && !gs_ready)ui_log(L"ERRORE: motore PDF/A non incorporato o impossibile estrarlo nella cartella temporanea.\r\n");
+  /* Unpack the large runtime ONLY if the input snapshot contains PDFs. */
+  if(pdf_count){
+    ui_log(L"Preparazione del motore PDF/A portatile...\r\n");
+    gs_ready=portable_prepare(job->gs);
+  }
+  if(pdf_count && !gs_ready)ui_log(L"ERRORE: motore PDF/A non incorporato o impossibile estrarlo nella cartella temporanea.\r\n");
 #else
-  if(job->do_pdfa && !gs_ready)ui_log(L"ATTENZIONE: Ghostscript non trovato. I PDF/A verranno saltati.\r\n");
+  if(pdf_count && !gs_ready)ui_log(L"ATTENZIONE: Ghostscript non trovato. I PDF/A verranno saltati.\r\n");
 #endif
-  if(job->do_pdfa && !icc_ready)ui_log(L"ATTENZIONE: profilo colore sRGB di Windows non trovato. I PDF/A verranno saltati.\r\n");
+  if(pdf_count && !icc_ready)ui_log(L"ATTENZIONE: profilo colore sRGB di Windows non trovato. I PDF/A verranno saltati.\r\n");
   /* JPG first; snapshot prevents newly produced PDFs being reprocessed in the same run. */
   for(i=0;i<=1;i++){
     for(node=head;node;node=node->next){
